@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AnimatePresence,
   motion,
@@ -16,10 +16,6 @@ import {
   FileText,
 } from "lucide-react";
 
-// ============================================
-// NAVIGATION LINKS - NO NUMBERS
-// ============================================
-
 const navLinks = [
   { id: "home", label: "Home" },
   { id: "about", label: "About" },
@@ -31,10 +27,7 @@ const navLinks = [
 ];
 
 const RESUME_PATH = "/Vignesh_S_Resume.pdf";
-
-// ============================================
-// MAIN NAVBAR
-// ============================================
+const NAVBAR_HEIGHT = 76;
 
 export default function Navbar() {
   const [activeSection, setActiveSection] =
@@ -48,13 +41,51 @@ export default function Navbar() {
 
   const reduceMotion = useReducedMotion();
 
+  // Temporarily preserve the clicked section while
+  // smooth scrolling is in progress.
+  const navigationTarget = useRef<string | null>(null);
+  const navigationTimer = useRef<
+    ReturnType<typeof setTimeout> | null
+  >(null);
+
+  const savedOverflow = useRef("");
+  const menuScrollLocked = useRef(false);
+
   // ============================================
-  // DETECT SCROLL + ACTIVE SECTION
+  // DETECT ACTIVE SECTION
   // ============================================
 
   useEffect(() => {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 20);
+
+      // Do not override a clicked link while
+      // the page is still moving to its section.
+      if (navigationTarget.current) {
+        const target = document.getElementById(
+          navigationTarget.current
+        );
+
+        if (target) {
+          const distance = Math.abs(
+            target.getBoundingClientRect().top -
+              NAVBAR_HEIGHT
+          );
+
+          if (distance < 24) {
+            navigationTarget.current = null;
+
+            if (navigationTimer.current) {
+              clearTimeout(navigationTimer.current);
+              navigationTimer.current = null;
+            }
+          } else {
+            return;
+          }
+        } else {
+          navigationTarget.current = null;
+        }
+      }
 
       let currentSection = "home";
 
@@ -65,9 +96,10 @@ export default function Navbar() {
 
         if (!section) continue;
 
-        if (
-          section.getBoundingClientRect().top <= 160
-        ) {
+        const sectionTop =
+          section.getBoundingClientRect().top;
+
+        if (sectionTop <= NAVBAR_HEIGHT + 80) {
           currentSection = link.id;
         }
       }
@@ -77,35 +109,38 @@ export default function Navbar() {
 
     handleScroll();
 
-    window.addEventListener(
-      "scroll",
-      handleScroll,
-      { passive: true }
-    );
+    window.addEventListener("scroll", handleScroll, {
+      passive: true,
+    });
+
+    window.addEventListener("resize", handleScroll);
 
     return () => {
       window.removeEventListener(
         "scroll",
         handleScroll
       );
+      window.removeEventListener(
+        "resize",
+        handleScroll
+      );
     };
   }, []);
 
   // ============================================
-  // MOBILE MENU - ESCAPE + SCROLL LOCK
+  // MOBILE MENU SCROLL LOCK
   // ============================================
 
   useEffect(() => {
     if (!isMenuOpen) return;
 
-    const oldOverflow =
+    savedOverflow.current =
       document.body.style.overflow;
 
     document.body.style.overflow = "hidden";
+    menuScrollLocked.current = true;
 
-    const handleKeyDown = (
-      event: KeyboardEvent
-    ) => {
+    const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setIsMenuOpen(false);
       }
@@ -113,29 +148,121 @@ export default function Navbar() {
 
     window.addEventListener(
       "keydown",
-      handleKeyDown
+      handleEscape
     );
 
     return () => {
       document.body.style.overflow =
-        oldOverflow;
+        savedOverflow.current;
+
+      menuScrollLocked.current = false;
 
       window.removeEventListener(
         "keydown",
-        handleKeyDown
+        handleEscape
       );
     };
   }, [isMenuOpen]);
+
+  // ============================================
+  // CLEAN UP NAVIGATION TIMER
+  // ============================================
+
+  useEffect(() => {
+    return () => {
+      if (navigationTimer.current) {
+        clearTimeout(navigationTimer.current);
+      }
+    };
+  }, []);
+
+  // ============================================
+  // CLOSE MENU
+  // ============================================
 
   const closeMenu = () => {
     setIsMenuOpen(false);
   };
 
+  // ============================================
+  // FIXED NAVIGATION FOR DESKTOP AND MOBILE
+  // ============================================
+
+  const navigateToSection = (
+    event: React.MouseEvent<HTMLAnchorElement>,
+    sectionId: string
+  ) => {
+    event.preventDefault();
+
+    const section =
+      document.getElementById(sectionId);
+
+    if (!section) return;
+
+    // Immediately highlight the selected link.
+    setActiveSection(sectionId);
+
+    // Prevent the scroll listener from selecting
+    // the previous section during animation.
+    navigationTarget.current = sectionId;
+
+    if (navigationTimer.current) {
+      clearTimeout(navigationTimer.current);
+    }
+
+    // Safety fallback if smooth scrolling is
+    // interrupted or the target cannot be reached.
+    navigationTimer.current = setTimeout(() => {
+      navigationTarget.current = null;
+      navigationTimer.current = null;
+    }, 1800);
+
+    // Close mobile menu.
+    setIsMenuOpen(false);
+
+    // Release mobile scrolling lock immediately.
+    if (menuScrollLocked.current) {
+      document.body.style.overflow =
+        savedOverflow.current;
+
+      menuScrollLocked.current = false;
+    }
+
+    // Keep the selected section in the URL.
+    window.history.replaceState(
+      null,
+      "",
+      `#${sectionId}`
+    );
+
+    // Wait until the menu state has updated.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const target =
+          document.getElementById(sectionId);
+
+        if (!target) return;
+
+        const targetTop =
+          target.getBoundingClientRect().top +
+          window.scrollY -
+          NAVBAR_HEIGHT;
+
+        window.scrollTo({
+          top: Math.max(0, targetTop),
+          behavior: reduceMotion
+            ? "instant"
+            : "smooth",
+        });
+      });
+    });
+  };
+
   return (
     <>
       {/* ======================================
-          DESKTOP / MAIN NAVBAR
-         ====================================== */}
+          MAIN NAVBAR
+      ====================================== */}
 
       <motion.header
         initial={
@@ -161,13 +288,17 @@ export default function Navbar() {
         }`}
       >
         {/* TOP NEON ACCENT */}
+
         <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-[#4de5f5]/65 to-transparent" />
 
         <div className="relative mx-auto flex h-[76px] max-w-7xl items-center justify-between gap-4 px-5 sm:px-6">
           {/* LOGO */}
+
           <a
             href="#home"
-            onClick={closeMenu}
+            onClick={(event) =>
+              navigateToSection(event, "home")
+            }
             className="group flex shrink-0 items-center gap-3"
             aria-label="Vignesh S - Home"
           >
@@ -205,8 +336,8 @@ export default function Navbar() {
           </a>
 
           {/* ======================================
-              DESKTOP NAVIGATION - NO NUMBERS
-             ====================================== */}
+              DESKTOP NAVIGATION
+          ====================================== */}
 
           <nav
             className="hidden items-center gap-1 xl:flex"
@@ -220,7 +351,9 @@ export default function Navbar() {
                 <a
                   key={link.id}
                   href={`#${link.id}`}
-                  onClick={closeMenu}
+                  onClick={(event) =>
+                    navigateToSection(event, link.id)
+                  }
                   aria-current={
                     isActive ? "location" : undefined
                   }
@@ -230,10 +363,10 @@ export default function Navbar() {
                       : "text-[#c5b39a] hover:text-[#4de5f5]"
                   }`}
                 >
-                  {/* SECTION NAME ONLY */}
                   {link.label}
 
                   {/* ACTIVE UNDERLINE */}
+
                   {isActive && (
                     <motion.span
                       layoutId="active-nav-underline"
@@ -247,6 +380,7 @@ export default function Navbar() {
                   )}
 
                   {/* HOVER UNDERLINE */}
+
                   {!isActive && (
                     <span className="absolute bottom-1 left-3 right-3 h-[2px] origin-left scale-x-0 bg-[#4de5f5] transition-transform duration-300 group-hover:scale-x-100" />
                   )}
@@ -257,10 +391,11 @@ export default function Navbar() {
 
           {/* ======================================
               RIGHT ACTION BUTTONS
-             ====================================== */}
+          ====================================== */}
 
           <div className="flex shrink-0 items-center gap-2">
             {/* RESUME DOWNLOAD */}
+
             <a
               href={RESUME_PATH}
               download="Vignesh_S_Resume.pdf"
@@ -275,9 +410,12 @@ export default function Navbar() {
             </a>
 
             {/* CONTACT BUTTON */}
+
             <a
               href="#contact"
-              onClick={closeMenu}
+              onClick={(event) =>
+                navigateToSection(event, "contact")
+              }
               className="group hidden items-center gap-2 border border-[#e7ae4c]/70 bg-[#a43b2a] px-3 py-3 text-[10px] font-bold uppercase tracking-[0.08em] text-white transition-all hover:border-[#e7ae4c] hover:bg-[#c45135] hover:shadow-[0_0_20px_rgba(231,174,76,0.12)] sm:inline-flex"
             >
               Let&apos;s Talk
@@ -289,6 +427,7 @@ export default function Navbar() {
             </a>
 
             {/* MOBILE MENU TOGGLE */}
+
             <button
               type="button"
               onClick={() =>
@@ -313,12 +452,13 @@ export default function Navbar() {
         </div>
 
         {/* BOTTOM GOLD ACCENT */}
+
         <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#e7ae4c]/35 to-transparent" />
       </motion.header>
 
       {/* ======================================
-          MOBILE NAVIGATION - NO NUMBERS
-         ====================================== */}
+          MOBILE NAVIGATION
+      ====================================== */}
 
       <AnimatePresence>
         {isMenuOpen && (
@@ -343,6 +483,7 @@ export default function Navbar() {
           >
             <div className="mx-auto max-w-xl">
               {/* MOBILE MENU HEADING */}
+
               <div className="mb-7 flex items-center gap-3">
                 <Clapperboard
                   size={17}
@@ -355,6 +496,7 @@ export default function Navbar() {
               </div>
 
               {/* MOBILE LINKS */}
+
               <nav
                 className="space-y-1"
                 aria-label="Mobile navigation"
@@ -367,7 +509,12 @@ export default function Navbar() {
                     <motion.a
                       key={link.id}
                       href={`#${link.id}`}
-                      onClick={closeMenu}
+                      onClick={(event) =>
+                        navigateToSection(
+                          event,
+                          link.id
+                        )
+                      }
                       aria-current={
                         isActive
                           ? "location"
@@ -396,7 +543,6 @@ export default function Navbar() {
                           : "border-[#b28b52]/20 text-[#f5e8cc] hover:bg-[#211710] hover:text-[#4de5f5]"
                       }`}
                     >
-                      {/* SECTION NAME ONLY */}
                       <span
                         className="text-[29px] font-black uppercase tracking-[0.04em]"
                         style={{
@@ -417,6 +563,7 @@ export default function Navbar() {
               </nav>
 
               {/* MOBILE RESUME BUTTON */}
+
               <a
                 href={RESUME_PATH}
                 download="Vignesh_S_Resume.pdf"
@@ -431,6 +578,7 @@ export default function Navbar() {
               </a>
 
               {/* MOBILE FOOTER */}
+
               <div className="mt-12 flex items-center justify-center gap-3 border-t border-[#b28b52]/25 pt-7">
                 <Clapperboard
                   size={17}
